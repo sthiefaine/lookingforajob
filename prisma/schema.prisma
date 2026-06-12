@@ -28,6 +28,7 @@ model JobOffer {
   title        String
   url          String
   description  String?
+  details      String?
   location     String?
   category     String?
   contractType String?

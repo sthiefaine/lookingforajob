@@ -234,6 +234,7 @@ export function OffersApp({
 /* --------------------------------- screen --------------------------------- */
 
 function OffersScreen({ totalCount }: { totalCount: number }) {
+  const [openOfferId, setOpenOfferId] = useState<string | null>(null);
   const offers = useOffers((s) => s.offers);
   const lastRunAt = useOffers((s) => s.lastRunAt);
   const fullyLoaded = useOffers((s) => s.fullyLoaded);
@@ -405,7 +406,7 @@ function OffersScreen({ totalCount }: { totalCount: number }) {
         ) : (
           <ul className="flex flex-col gap-3">
             {visible.slice(0, 200).map((o) => (
-              <OfferCard key={o.id} offer={o} />
+              <OfferCard key={o.id} offer={o} onOpen={() => setOpenOfferId(o.id)} />
             ))}
           </ul>
         )}
@@ -416,6 +417,161 @@ function OffersScreen({ totalCount }: { totalCount: number }) {
           </p>
         )}
       </main>
+
+      {openOfferId && (
+        <DetailSheetById id={openOfferId} onClose={() => setOpenOfferId(null)} />
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------ detail sheet ------------------------------ */
+
+const detailCache = new Map<string, string | null>();
+
+/** Reads the live offer from the store so status changes reflect instantly. */
+function DetailSheetById({ id, onClose }: { id: string; onClose: () => void }) {
+  const offer = useOffers((s) => s.offers.find((o) => o.id === id));
+  if (!offer) return null;
+  return <DetailSheet offer={offer} onClose={onClose} />;
+}
+
+function DetailSheet({
+  offer,
+  onClose,
+}: {
+  offer: OfferDTO;
+  onClose: () => void;
+}) {
+  const setStatus = useOffers((s) => s.setStatus);
+  const meta = SOURCE_META[offer.source];
+  const [details, setDetails] = useState<string | null | undefined>(
+    detailCache.has(offer.id) ? detailCache.get(offer.id) : undefined
+  );
+
+  useEffect(() => {
+    if (offer.status === "NEW") setStatus(offer.id, "SEEN");
+    if (detailCache.has(offer.id)) return;
+    let cancelled = false;
+    fetch(`/api/offers/${offer.id}/detail`)
+      .then((r) => (r.ok ? r.json() : { details: null }))
+      .then((d: { details: string | null }) => {
+        detailCache.set(offer.id, d.details);
+        if (!cancelled) setDetails(d.details);
+      })
+      .catch(() => {
+        if (!cancelled) setDetails(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offer.id]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [onClose]);
+
+  return (
+    <div className="fixed inset-0 z-40">
+      <div className="absolute inset-0 bg-black/70" onClick={onClose} />
+      <div className="absolute inset-x-0 bottom-0 mx-auto flex max-h-[88dvh] w-full max-w-3xl flex-col rounded-t-2xl border border-zinc-700/60 bg-zinc-900 shadow-2xl">
+        {/* header */}
+        <div className="flex items-start justify-between gap-3 border-b border-zinc-800 p-4 pb-3">
+          <div className="min-w-0">
+            <span
+              className={`inline-flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide ${meta.text}`}
+            >
+              <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
+              {meta.label}
+            </span>
+            <h2 className="mt-1 text-[15px] font-semibold leading-snug text-zinc-50">
+              {offer.title}
+            </h2>
+            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-400">
+              {(offer.dept ?? offer.location) && (
+                <span className="inline-flex items-center gap-1">
+                  <IconMapPin className="h-3.5 w-3.5 text-zinc-500" />
+                  {offer.source === "EDUCATION_GOUV"
+                    ? (offer.dept ?? offer.location)
+                    : (offer.location ?? offer.dept)}
+                </span>
+              )}
+              {offer.contractType && (
+                <span className="inline-flex items-center gap-1">
+                  <IconBriefcase className="h-3.5 w-3.5 text-zinc-500" />
+                  {offer.contractType}
+                </span>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Fermer"
+            className="rounded-lg border border-zinc-800 p-1.5 text-zinc-400 hover:bg-zinc-800"
+          >
+            <SvgIcon className="h-4 w-4">
+              <path d="M18 6 6 18" />
+              <path d="m6 6 12 12" />
+            </SvgIcon>
+          </button>
+        </div>
+
+        {/* body */}
+        <div className="min-h-32 flex-1 overflow-y-auto p-4">
+          {details === undefined ? (
+            <p className="py-8 text-center text-sm text-zinc-500">
+              Chargement du détail…
+            </p>
+          ) : details === null ? (
+            <p className="py-8 text-center text-sm text-zinc-500">
+              Détail indisponible — ouvre l&apos;annonce d&apos;origine.
+            </p>
+          ) : (
+            <pre className="whitespace-pre-wrap font-sans text-[13px] leading-relaxed text-zinc-300">
+              {details}
+            </pre>
+          )}
+        </div>
+
+        {/* footer */}
+        <div className="flex items-center justify-between gap-2 border-t border-zinc-800 p-3 pb-[max(env(safe-area-inset-bottom),0.75rem)]">
+          <div className="flex gap-1">
+            {(["SEEN", "INTERESTED", "APPLIED", "REJECTED"] as OfferStatus[]).map(
+              (s) => (
+                <button
+                  key={s}
+                  onClick={() =>
+                    setStatus(offer.id, offer.status === s ? "SEEN" : s)
+                  }
+                  className={`rounded-md border px-2 py-1.5 text-[11px] transition-colors ${
+                    offer.status === s
+                      ? STATUS_META[s].active
+                      : "border-zinc-800 text-zinc-500 hover:border-zinc-700 active:bg-zinc-800"
+                  }`}
+                >
+                  {STATUS_META[s].label}
+                </button>
+              )
+            )}
+          </div>
+          <a
+            href={offer.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-sky-500/15 border border-sky-500/40 px-3 py-1.5 text-xs font-medium text-sky-300 hover:bg-sky-500/25"
+          >
+            Voir l&apos;annonce
+            <IconExternal className="h-3.5 w-3.5" />
+          </a>
+        </div>
+      </div>
     </div>
   );
 }
@@ -537,7 +693,13 @@ function Chip({
 
 /* ---------------------------------- card ---------------------------------- */
 
-function OfferCard({ offer }: { offer: OfferDTO }) {
+function OfferCard({
+  offer,
+  onOpen,
+}: {
+  offer: OfferDTO;
+  onOpen: () => void;
+}) {
   const setStatus = useOffers((s) => s.setStatus);
   const meta = SOURCE_META[offer.source];
   const deadline = fmtDate(offer.deadline);
@@ -570,16 +732,13 @@ function OfferCard({ offer }: { offer: OfferDTO }) {
         )}
       </div>
 
-      {/* title */}
-      <a
-        href={offer.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        onClick={() => offer.status === "NEW" && setStatus(offer.id, "SEEN")}
-        className="mt-1.5 block text-[15px] font-semibold leading-snug text-zinc-50 hover:text-white hover:underline underline-offset-2"
+      {/* title — opens the in-app detail sheet */}
+      <button
+        onClick={onOpen}
+        className="mt-1.5 block w-full text-left text-[15px] font-semibold leading-snug text-zinc-50 hover:text-white hover:underline underline-offset-2"
       >
         {offer.title}
-      </a>
+      </button>
 
       {/* meta */}
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-400">
