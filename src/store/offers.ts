@@ -9,7 +9,7 @@ export interface OfferDTO {
   url: string;
   description: string | null;
   location: string | null;
-  city: string | null;
+  dept: string | null;
   category: string | null;
   contractType: string | null;
   deadline: string | null;
@@ -29,14 +29,15 @@ export interface OffersState {
   search: string;
   sources: Source[];
   statuses: OfferStatus[];
-  city: string | null;
+  depts: string[];
   sort: SortKey;
   showInactive: boolean;
   replaceAll: (offers: OfferDTO[], lastRunAt: string | null) => void;
   setSearch: (s: string) => void;
   toggleSource: (s: Source) => void;
   toggleStatus: (s: OfferStatus) => void;
-  setCity: (c: string | null) => void;
+  toggleDept: (d: string) => void;
+  clearDepts: () => void;
   setSort: (s: SortKey) => void;
   setShowInactive: (v: boolean) => void;
   setStatus: (id: string, status: OfferStatus) => Promise<void>;
@@ -60,7 +61,7 @@ export function createOffersStore(
         search: "",
         sources: [],
         statuses: [],
-        city: null,
+        depts: [],
         sort: "recent" as SortKey,
         showInactive: false,
         replaceAll: (offers, newLastRunAt) =>
@@ -78,7 +79,13 @@ export function createOffersStore(
               ? st.statuses.filter((x) => x !== s)
               : [...st.statuses, s],
           })),
-        setCity: (city) => set({ city }),
+        toggleDept: (d) =>
+          set((st) => ({
+            depts: st.depts.includes(d)
+              ? st.depts.filter((x) => x !== d)
+              : [...st.depts, d],
+          })),
+        clearDepts: () => set({ depts: [] }),
         setSort: (sort) => set({ sort }),
         setShowInactive: (showInactive) => set({ showInactive }),
         setStatus: async (id, status) => {
@@ -94,12 +101,13 @@ export function createOffersStore(
       }),
       {
         name: "lfaj-filters",
+        version: 1,
         storage: createJSONStorage(() => localStorage),
         skipHydration: true,
         partialize: (s) => ({
           sources: s.sources,
           statuses: s.statuses,
-          city: s.city,
+          depts: s.depts,
           sort: s.sort,
           showInactive: s.showInactive,
         }),
@@ -113,7 +121,7 @@ export interface VisibleFilters {
   search: string;
   sources: Source[];
   statuses: OfferStatus[];
-  city: string | null;
+  depts: string[];
   sort: SortKey;
   showInactive: boolean;
 }
@@ -125,10 +133,10 @@ export function computeVisibleOffers(f: VisibleFilters): OfferDTO[] {
     if (!f.showInactive && !o.isActive) return false;
     if (f.sources.length && !f.sources.includes(o.source)) return false;
     if (f.statuses.length && !f.statuses.includes(o.status)) return false;
-    if (f.city && o.city !== f.city) return false;
+    if (f.depts.length && (!o.dept || !f.depts.includes(o.dept))) return false;
     if (
       q &&
-      ![o.title, o.city, o.location, o.category, o.contractType, o.description]
+      ![o.title, o.dept, o.location, o.category, o.contractType, o.description]
         .filter(Boolean)
         .some((field) => field!.toLowerCase().includes(q))
     )

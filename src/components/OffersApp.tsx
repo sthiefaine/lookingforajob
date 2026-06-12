@@ -240,13 +240,14 @@ function OffersScreen({ totalCount }: { totalCount: number }) {
   const search = useOffers((s) => s.search);
   const sources = useOffers((s) => s.sources);
   const statuses = useOffers((s) => s.statuses);
-  const city = useOffers((s) => s.city);
+  const depts = useOffers((s) => s.depts);
   const sort = useOffers((s) => s.sort);
   const showInactive = useOffers((s) => s.showInactive);
   const setSearch = useOffers((s) => s.setSearch);
   const toggleSource = useOffers((s) => s.toggleSource);
   const toggleStatus = useOffers((s) => s.toggleStatus);
-  const setCity = useOffers((s) => s.setCity);
+  const toggleDept = useOffers((s) => s.toggleDept);
+  const clearDepts = useOffers((s) => s.clearDepts);
   const setSort = useOffers((s) => s.setSort);
   const setShowInactive = useOffers((s) => s.setShowInactive);
 
@@ -260,18 +261,18 @@ function OffersScreen({ totalCount }: { totalCount: number }) {
         search,
         sources,
         statuses,
-        city,
+        depts,
         sort,
         showInactive,
       }),
-    [offers, search, sources, statuses, city, sort, showInactive]
+    [offers, search, sources, statuses, depts, sort, showInactive]
   );
 
-  const cities = useMemo(() => {
+  const deptOptions = useMemo(() => {
     const counts = new Map<string, number>();
     for (const o of offers) {
-      if (!o.city || (!o.isActive && !showInactive)) continue;
-      counts.set(o.city, (counts.get(o.city) ?? 0) + 1);
+      if (!o.dept || (!o.isActive && !showInactive)) continue;
+      counts.set(o.dept, (counts.get(o.dept) ?? 0) + 1);
     }
     return [...counts.entries()].sort(
       (a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "fr")
@@ -323,23 +324,14 @@ function OffersScreen({ totalCount }: { totalCount: number }) {
             />
           </div>
 
-          {/* city + sort */}
+          {/* departments + sort */}
           <div className="mt-2 grid grid-cols-2 gap-2">
-            <label className="relative block">
-              <select
-                value={city ?? ""}
-                onChange={(e) => setCity(e.target.value || null)}
-                className="w-full appearance-none truncate rounded-lg border border-zinc-800 bg-zinc-900 py-2 pl-3 pr-8 text-sm text-zinc-300 focus:border-zinc-500 focus:outline-none"
-              >
-                <option value="">Toutes les villes</option>
-                {cities.map(([c, n]) => (
-                  <option key={c} value={c}>
-                    {c} · {n}
-                  </option>
-                ))}
-              </select>
-              <IconChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-            </label>
+            <DeptPicker
+              depts={depts}
+              options={deptOptions}
+              toggle={toggleDept}
+              clear={clearDepts}
+            />
             <label className="relative block">
               <select
                 value={sort}
@@ -358,6 +350,18 @@ function OffersScreen({ totalCount }: { totalCount: number }) {
 
           {/* filter chips */}
           <div className="-mx-4 mt-2 flex gap-1.5 overflow-x-auto px-4 pb-1 [scrollbar-width:none]">
+            <button
+              onClick={() => toggleDept(MONTPELLIER_DEPT)}
+              className={`inline-flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+                depts.includes(MONTPELLIER_DEPT)
+                  ? "border-sky-400/60 bg-sky-500/15 text-sky-300"
+                  : "border-sky-500/30 bg-zinc-900 text-sky-400/90 hover:border-sky-400/50 active:bg-zinc-800"
+              }`}
+            >
+              <IconMapPin className="h-3 w-3" />
+              Montpellier (34)
+            </button>
+            <span className="mx-1 w-px shrink-0 self-stretch bg-zinc-800" />
             {(Object.keys(SOURCE_META) as Source[]).map((s) => (
               <Chip
                 key={s}
@@ -412,6 +416,96 @@ function OffersScreen({ totalCount }: { totalCount: number }) {
           </p>
         )}
       </main>
+    </div>
+  );
+}
+
+/* ------------------------------ dept picker ------------------------------- */
+
+const MONTPELLIER_DEPT = "Hérault (34)";
+
+function DeptPicker({
+  depts,
+  options,
+  toggle,
+  clear,
+}: {
+  depts: string[];
+  options: [string, number][];
+  toggle: (d: string) => void;
+  clear: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+    };
+  }, [open]);
+
+  const label =
+    depts.length === 0
+      ? "Tous les départements"
+      : depts.length === 1
+        ? depts[0]
+        : `${depts.length} départements`;
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className={`flex w-full items-center justify-between gap-2 rounded-lg border bg-zinc-900 py-2 pl-3 pr-2.5 text-sm focus:outline-none ${
+          depts.length > 0
+            ? "border-sky-500/50 text-sky-300"
+            : "border-zinc-800 text-zinc-300 focus:border-zinc-500"
+        }`}
+      >
+        <span className="truncate">{label}</span>
+        <IconChevronDown className="h-4 w-4 shrink-0 text-zinc-500" />
+      </button>
+
+      {open && (
+        <div className="absolute left-0 right-0 z-30 mt-1.5 max-h-80 overflow-y-auto rounded-lg border border-zinc-700 bg-zinc-900 p-1.5 shadow-2xl shadow-black/60">
+          {depts.length > 0 && (
+            <button
+              onClick={clear}
+              className="mb-1 w-full rounded-md border border-zinc-700 px-2 py-1.5 text-xs font-medium text-zinc-300 hover:bg-zinc-800"
+            >
+              Tout désélectionner ({depts.length})
+            </button>
+          )}
+          {options.map(([d, n]) => (
+            <label
+              key={d}
+              className="flex cursor-pointer items-center gap-2.5 rounded-md px-2 py-1.5 text-sm text-zinc-300 hover:bg-zinc-800"
+            >
+              <input
+                type="checkbox"
+                checked={depts.includes(d)}
+                onChange={() => toggle(d)}
+                className="h-3.5 w-3.5 accent-sky-500"
+              />
+              <span className="flex-1 truncate">{d}</span>
+              <span className="text-xs tabular-nums text-zinc-500">{n}</span>
+            </label>
+          ))}
+          {options.length === 0 && (
+            <p className="px-2 py-3 text-center text-xs text-zinc-500">
+              Aucun département disponible
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -489,10 +583,12 @@ function OfferCard({ offer }: { offer: OfferDTO }) {
 
       {/* meta */}
       <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-400">
-        {(offer.city ?? offer.location) && (
+        {(offer.dept ?? offer.location) && (
           <span className="inline-flex items-center gap-1">
             <IconMapPin className="h-3.5 w-3.5 text-zinc-500" />
-            {offer.city ?? offer.location}
+            {offer.source === "EDUCATION_GOUV"
+              ? (offer.dept ?? offer.location)
+              : (offer.location ?? offer.dept)}
           </span>
         )}
         {offer.contractType && (

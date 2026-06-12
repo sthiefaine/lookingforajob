@@ -3,17 +3,26 @@ import type { JobOffer } from "@prisma/client";
 import type { OfferDTO } from "@/store/offers";
 import { departementLabel } from "@/lib/departements";
 
-function capitalizeWords(s: string): string {
-  return s.replace(/\p{L}+/gu, (w) => w[0].toUpperCase() + w.slice(1));
-}
-
-/** Best-effort normalized "city" for filtering, per source. */
-function cityOf(o: JobOffer): string | null {
+/** Normalized department label ("Hérault (34)") for filtering, per source. */
+function deptOf(o: JobOffer): string | null {
   switch (o.source) {
     case "UNIV_MONTP3":
-      return "Montpellier";
-    case "HEIDELBERG":
-      return o.location ? capitalizeWords(o.location.toLowerCase()) : null;
+      // Université Paul-Valéry — Montpellier
+      return departementLabel("34");
+    case "HEIDELBERG": {
+      const loc = o.location ?? "";
+      const postal = loc.match(/\b(\d{5})\b/);
+      if (postal) {
+        const code = postal[1].startsWith("97")
+          ? postal[1].slice(0, 3)
+          : postal[1].slice(0, 2);
+        return departementLabel(code);
+      }
+      if (/montpellier|castelnau|lattes|grabels|juvignac|p[ée]rols/i.test(loc)) {
+        return departementLabel("34");
+      }
+      return null;
+    }
     case "EDUCATION_GOUV": {
       const raw = o.raw as { Departement__c?: string } | null;
       if (raw?.Departement__c) {
@@ -33,7 +42,7 @@ export function toDTO(o: JobOffer): OfferDTO {
     url: o.url,
     description: o.description ? o.description.slice(0, 220) : null,
     location: o.location,
-    city: cityOf(o),
+    dept: deptOf(o),
     category: o.category,
     contractType: o.contractType,
     deadline: o.deadline?.toISOString() ?? null,
