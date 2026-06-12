@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import type { OfferStatus, Source } from "@prisma/client";
 import {
   selectVisibleOffers,
@@ -44,11 +44,20 @@ export function OffersApp({
   initialOffers: OfferDTO[];
   lastRunAt: string | null;
 }) {
+  // Seed the store before first render so SSR and hydration both show the list.
+  const seeded = useRef(false);
+  if (!seeded.current) {
+    useOffersStore.setState({ offers: initialOffers });
+    seeded.current = true;
+  }
+
   const store = useOffersStore();
   const visible = useOffersStore(selectVisibleOffers);
 
   useEffect(() => {
-    store.setOffers(initialOffers);
+    if (seeded.current) {
+      store.setOffers(initialOffers);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialOffers]);
 
