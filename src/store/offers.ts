@@ -1,4 +1,5 @@
 import { createStore } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import type { OfferStatus, Source } from "@prisma/client";
 
 export interface OfferDTO {
@@ -8,6 +9,7 @@ export interface OfferDTO {
   url: string;
   description: string | null;
   location: string | null;
+  city: string | null;
   category: string | null;
   contractType: string | null;
   deadline: string | null;
@@ -17,7 +19,7 @@ export interface OfferDTO {
   firstSeenAt: string;
 }
 
-export type SortKey = "recent" | "deadline" | "title";
+export type SortKey = "recent" | "published" | "deadline" | "title";
 
 export interface OffersState {
   offers: OfferDTO[];
@@ -27,12 +29,14 @@ export interface OffersState {
   search: string;
   sources: Source[];
   statuses: OfferStatus[];
+  city: string | null;
   sort: SortKey;
   showInactive: boolean;
   replaceAll: (offers: OfferDTO[], lastRunAt: string | null) => void;
   setSearch: (s: string) => void;
   toggleSource: (s: Source) => void;
   toggleStatus: (s: OfferStatus) => void;
+  setCity: (c: string | null) => void;
   setSort: (s: SortKey) => void;
   setShowInactive: (v: boolean) => void;
   setStatus: (id: string, status: OfferStatus) => Promise<void>;
@@ -40,48 +44,68 @@ export interface OffersState {
 
 export type OffersStore = ReturnType<typeof createOffersStore>;
 
-/** One store per request/page so SSR renders with the fetched offers. */
+/** One store per request/page so SSR renders with the fetched offers.
+ *  Filter preferences persist to localStorage; rehydration is deferred
+ *  (skipHydration) and triggered after mount to keep SSR markup stable. */
 export function createOffersStore(
   initialOffers: OfferDTO[],
   lastRunAt: string | null
 ) {
-  return createStore<OffersState>()((set, get) => ({
-    offers: initialOffers,
-    fullyLoaded: false,
-    lastRunAt,
-    search: "",
-    sources: [],
-    statuses: [],
-    sort: "recent",
-    showInactive: false,
-    replaceAll: (offers, newLastRunAt) =>
-      set({ offers, lastRunAt: newLastRunAt, fullyLoaded: true }),
-    setSearch: (search) => set({ search }),
-    toggleSource: (s) =>
-      set((st) => ({
-        sources: st.sources.includes(s)
-          ? st.sources.filter((x) => x !== s)
-          : [...st.sources, s],
-      })),
-    toggleStatus: (s) =>
-      set((st) => ({
-        statuses: st.statuses.includes(s)
-          ? st.statuses.filter((x) => x !== s)
-          : [...st.statuses, s],
-      })),
-    setSort: (sort) => set({ sort }),
-    setShowInactive: (showInactive) => set({ showInactive }),
-    setStatus: async (id, status) => {
-      const prev = get().offers;
-      set({ offers: prev.map((o) => (o.id === id ? { ...o, status } : o)) });
-      const res = await fetch(`/api/offers/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      if (!res.ok) set({ offers: prev });
-    },
-  }));
+  return createStore<OffersState>()(
+    persist(
+      (set, get) => ({
+        offers: initialOffers,
+        fullyLoaded: false,
+        lastRunAt,
+        search: "",
+        sources: [],
+        statuses: [],
+        city: null,
+        sort: "recent" as SortKey,
+        showInactive: false,
+        replaceAll: (offers, newLastRunAt) =>
+          set({ offers, lastRunAt: newLastRunAt, fullyLoaded: true }),
+        setSearch: (search) => set({ search }),
+        toggleSource: (s) =>
+          set((st) => ({
+            sources: st.sources.includes(s)
+              ? st.sources.filter((x) => x !== s)
+              : [...st.sources, s],
+          })),
+        toggleStatus: (s) =>
+          set((st) => ({
+            statuses: st.statuses.includes(s)
+              ? st.statuses.filter((x) => x !== s)
+              : [...st.statuses, s],
+          })),
+        setCity: (city) => set({ city }),
+        setSort: (sort) => set({ sort }),
+        setShowInactive: (showInactive) => set({ showInactive }),
+        setStatus: async (id, status) => {
+          const prev = get().offers;
+          set({ offers: prev.map((o) => (o.id === id ? { ...o, status } : o)) });
+          const res = await fetch(`/api/offers/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status }),
+          });
+          if (!res.ok) set({ offers: prev });
+        },
+      }),
+      {
+        name: "lfaj-filters",
+        storage: createJSONStorage(() => localStorage),
+        skipHydration: true,
+        partialize: (s) => ({
+          sources: s.sources,
+          statuses: s.statuses,
+          city: s.city,
+          sort: s.sort,
+          showInactive: s.showInactive,
+        }),
+      }
+    )
+  );
 }
 
 export interface VisibleFilters {
@@ -89,6 +113,7 @@ export interface VisibleFilters {
   search: string;
   sources: Source[];
   statuses: OfferStatus[];
+  city: string | null;
   sort: SortKey;
   showInactive: boolean;
 }
@@ -100,9 +125,10 @@ export function computeVisibleOffers(f: VisibleFilters): OfferDTO[] {
     if (!f.showInactive && !o.isActive) return false;
     if (f.sources.length && !f.sources.includes(o.source)) return false;
     if (f.statuses.length && !f.statuses.includes(o.status)) return false;
+    if (f.city && o.city !== f.city) return false;
     if (
       q &&
-      ![o.title, o.location, o.category, o.contractType, o.description]
+      ![o.title, o.city, o.location, o.category, o.contractType, o.description]
         .filter(Boolean)
         .some((field) => field!.toLowerCase().includes(q))
     )
@@ -110,6 +136,12 @@ export function computeVisibleOffers(f: VisibleFilters): OfferDTO[] {
     return true;
   });
   switch (f.sort) {
+    case "published":
+      return list.sort((a, b) => {
+        const da = a.publishedAt ?? a.firstSeenAt;
+        const db = b.publishedAt ?? b.firstSeenAt;
+        return db.localeCompare(da);
+      });
     case "deadline":
       return list.sort((a, b) =>
         (a.deadline ?? "9999").localeCompare(b.deadline ?? "9999")
@@ -117,10 +149,7 @@ export function computeVisibleOffers(f: VisibleFilters): OfferDTO[] {
     case "title":
       return list.sort((a, b) => a.title.localeCompare(b.title, "fr"));
     default:
-      return list.sort((a, b) => {
-        const da = a.publishedAt ?? a.firstSeenAt;
-        const db = b.publishedAt ?? b.firstSeenAt;
-        return db.localeCompare(da);
-      });
+      // "recent" — newest discoveries first
+      return list.sort((a, b) => b.firstSeenAt.localeCompare(a.firstSeenAt));
   }
 }
