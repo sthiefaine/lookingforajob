@@ -1,6 +1,13 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useStore } from "zustand";
 import type { OfferStatus, Source } from "@prisma/client";
 import {
@@ -40,12 +47,28 @@ const SORTS: { key: SortKey; label: string }[] = [
   { key: "title", label: "A→Z" },
 ];
 
+// Deterministic date formatting — node:alpine ships a minimal ICU, so
+// Intl/toLocale* renders differently on the server than in the browser and
+// breaks hydration. Never use Intl in SSR'd text here.
+const MONTHS_FR = [
+  "janv.",
+  "févr.",
+  "mars",
+  "avr.",
+  "mai",
+  "juin",
+  "juil.",
+  "août",
+  "sept.",
+  "oct.",
+  "nov.",
+  "déc.",
+];
+
 function fmtDate(iso: string | null): string | null {
   if (!iso) return null;
-  return new Date(iso).toLocaleDateString("fr-FR", {
-    day: "numeric",
-    month: "short",
-  });
+  const d = new Date(iso);
+  return `${d.getUTCDate()} ${MONTHS_FR[d.getUTCMonth()]}`;
 }
 
 const REFRESH_MS = 60_000;
@@ -108,6 +131,10 @@ export function OffersApp({
 function OffersScreen({ totalCount }: { totalCount: number }) {
   const lastRunAt = useOffers((s) => s.lastRunAt);
   const fullyLoaded = useOffers((s) => s.fullyLoaded);
+  // Local time only after mount — server-rendered clock text can't match the
+  // visitor's timezone, so we render it client-side only.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
   const offers = useOffers((s) => s.offers);
   const search = useOffers((s) => s.search);
   const sources = useOffers((s) => s.sources);
@@ -141,9 +168,11 @@ function OffersScreen({ totalCount }: { totalCount: number }) {
               🎯 Offres d&apos;emploi
             </h1>
             <span className="text-xs text-zinc-500">
-              {lastRunAt
-                ? `MAJ ${new Date(lastRunAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`
-                : "jamais scanné"}
+              {!mounted
+                ? ""
+                : lastRunAt
+                  ? `MAJ ${new Date(lastRunAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`
+                  : "jamais scanné"}
             </span>
           </div>
           <p className="mt-0.5 text-xs text-zinc-400">
