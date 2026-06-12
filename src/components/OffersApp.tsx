@@ -1,13 +1,24 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { createContext, useContext, useMemo, useRef } from "react";
+import { useStore } from "zustand";
 import type { OfferStatus, Source } from "@prisma/client";
 import {
-  selectVisibleOffers,
-  useOffersStore,
+  computeVisibleOffers,
+  createOffersStore,
   type OfferDTO,
+  type OffersState,
+  type OffersStore,
   type SortKey,
 } from "@/store/offers";
+
+const StoreCtx = createContext<OffersStore | null>(null);
+
+function useOffers<T>(selector: (s: OffersState) => T): T {
+  const store = useContext(StoreCtx);
+  if (!store) throw new Error("OffersApp store missing");
+  return useStore(store, selector);
+}
 
 const SOURCE_META: Record<Source, { label: string; badge: string }> = {
   EDUCATION_GOUV: { label: "Éduc. nationale", badge: "bg-blue-500/15 text-blue-300 border-blue-500/30" },
@@ -44,26 +55,40 @@ export function OffersApp({
   initialOffers: OfferDTO[];
   lastRunAt: string | null;
 }) {
-  // Seed the store before first render so SSR and hydration both show the list.
-  const seeded = useRef(false);
-  if (!seeded.current) {
-    useOffersStore.setState({ offers: initialOffers });
-    seeded.current = true;
+  const storeRef = useRef<OffersStore | null>(null);
+  if (!storeRef.current) {
+    storeRef.current = createOffersStore(initialOffers);
   }
+  return (
+    <StoreCtx.Provider value={storeRef.current}>
+      <OffersScreen lastRunAt={lastRunAt} />
+    </StoreCtx.Provider>
+  );
+}
 
-  const store = useOffersStore();
-  const visible = useOffersStore(selectVisibleOffers);
+function OffersScreen({ lastRunAt }: { lastRunAt: string | null }) {
+  const offers = useOffers((s) => s.offers);
+  const search = useOffers((s) => s.search);
+  const sources = useOffers((s) => s.sources);
+  const statuses = useOffers((s) => s.statuses);
+  const sort = useOffers((s) => s.sort);
+  const showInactive = useOffers((s) => s.showInactive);
+  const setSearch = useOffers((s) => s.setSearch);
+  const toggleSource = useOffers((s) => s.toggleSource);
+  const toggleStatus = useOffers((s) => s.toggleStatus);
+  const setSort = useOffers((s) => s.setSort);
+  const setShowInactive = useOffers((s) => s.setShowInactive);
 
-  useEffect(() => {
-    if (seeded.current) {
-      store.setOffers(initialOffers);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialOffers]);
+  const visible = useMemo(
+    () =>
+      computeVisibleOffers({ offers, search, sources, statuses, sort, showInactive }),
+    [offers, search, sources, statuses, sort, showInactive]
+  );
 
-  const newCount = store.offers.filter(
-    (o) => o.status === "NEW" && o.isActive
-  ).length;
+  const newCount = useMemo(
+    () => offers.filter((o) => o.status === "NEW" && o.isActive).length,
+    [offers]
+  );
 
   return (
     <div className="min-h-dvh bg-zinc-950 text-zinc-100">
@@ -92,46 +117,31 @@ export function OffersApp({
           <input
             type="search"
             placeholder="Rechercher un poste, un lieu…"
-            value={store.search}
-            onChange={(e) => store.setSearch(e.target.value)}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
             className="mt-2 w-full rounded-xl border border-zinc-800 bg-zinc-900 px-3 py-2 text-sm placeholder:text-zinc-600 focus:border-zinc-600 focus:outline-none"
           />
 
           {/* Filter chips — horizontal scroll on mobile */}
           <div className="-mx-4 mt-2 flex gap-1.5 overflow-x-auto px-4 pb-2 [scrollbar-width:none]">
             {(Object.keys(SOURCE_META) as Source[]).map((s) => (
-              <Chip
-                key={s}
-                active={store.sources.includes(s)}
-                onClick={() => store.toggleSource(s)}
-              >
+              <Chip key={s} active={sources.includes(s)} onClick={() => toggleSource(s)}>
                 {SOURCE_META[s].label}
               </Chip>
             ))}
             <span className="mx-1 w-px shrink-0 bg-zinc-800" />
             {(Object.keys(STATUS_META) as OfferStatus[]).map((s) => (
-              <Chip
-                key={s}
-                active={store.statuses.includes(s)}
-                onClick={() => store.toggleStatus(s)}
-              >
+              <Chip key={s} active={statuses.includes(s)} onClick={() => toggleStatus(s)}>
                 {STATUS_META[s].icon} {STATUS_META[s].label}
               </Chip>
             ))}
             <span className="mx-1 w-px shrink-0 bg-zinc-800" />
             {SORTS.map((s) => (
-              <Chip
-                key={s.key}
-                active={store.sort === s.key}
-                onClick={() => store.setSort(s.key)}
-              >
+              <Chip key={s.key} active={sort === s.key} onClick={() => setSort(s.key)}>
                 ↕ {s.label}
               </Chip>
             ))}
-            <Chip
-              active={store.showInactive}
-              onClick={() => store.setShowInactive(!store.showInactive)}
-            >
+            <Chip active={showInactive} onClick={() => setShowInactive(!showInactive)}>
               Inclure fermées
             </Chip>
           </div>
@@ -146,10 +156,15 @@ export function OffersApp({
           </p>
         ) : (
           <ul className="flex flex-col gap-2.5">
-            {visible.map((o) => (
+            {visible.slice(0, 300).map((o) => (
               <OfferCard key={o.id} offer={o} />
             ))}
           </ul>
+        )}
+        {visible.length > 300 && (
+          <p className="py-4 text-center text-xs text-zinc-500">
+            {visible.length - 300} offres de plus — affine les filtres pour les voir.
+          </p>
         )}
       </main>
     </div>
@@ -180,7 +195,7 @@ function Chip({
 }
 
 function OfferCard({ offer }: { offer: OfferDTO }) {
-  const setStatus = useOffersStore((s) => s.setStatus);
+  const setStatus = useOffers((s) => s.setStatus);
   const sourceMeta = SOURCE_META[offer.source];
   const deadline = fmtDate(offer.deadline);
   const published = fmtDate(offer.publishedAt) ?? fmtDate(offer.firstSeenAt);
