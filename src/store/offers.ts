@@ -21,11 +21,15 @@ export type SortKey = "recent" | "deadline" | "title";
 
 export interface OffersState {
   offers: OfferDTO[];
+  /** False until the full list has been fetched client-side. */
+  fullyLoaded: boolean;
+  lastRunAt: string | null;
   search: string;
   sources: Source[];
   statuses: OfferStatus[];
   sort: SortKey;
   showInactive: boolean;
+  replaceAll: (offers: OfferDTO[], lastRunAt: string | null) => void;
   setSearch: (s: string) => void;
   toggleSource: (s: Source) => void;
   toggleStatus: (s: OfferStatus) => void;
@@ -37,14 +41,21 @@ export interface OffersState {
 export type OffersStore = ReturnType<typeof createOffersStore>;
 
 /** One store per request/page so SSR renders with the fetched offers. */
-export function createOffersStore(initialOffers: OfferDTO[]) {
+export function createOffersStore(
+  initialOffers: OfferDTO[],
+  lastRunAt: string | null
+) {
   return createStore<OffersState>()((set, get) => ({
     offers: initialOffers,
+    fullyLoaded: false,
+    lastRunAt,
     search: "",
     sources: [],
     statuses: [],
     sort: "recent",
     showInactive: false,
+    replaceAll: (offers, newLastRunAt) =>
+      set({ offers, lastRunAt: newLastRunAt, fullyLoaded: true }),
     setSearch: (search) => set({ search }),
     toggleSource: (s) =>
       set((st) => ({

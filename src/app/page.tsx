@@ -1,40 +1,27 @@
 import { prisma } from "@/lib/prisma";
 import { OffersApp } from "@/components/OffersApp";
-import type { OfferDTO } from "@/store/offers";
+import { getLastRunAt, toDTO, OFFERS_ORDER } from "@/lib/offers";
 
 export const dynamic = "force-dynamic";
 
+const SSR_COUNT = 50;
+
 export default async function Home() {
-  const rows = await prisma.jobOffer.findMany({
-    orderBy: [{ publishedAt: "desc" }, { firstSeenAt: "desc" }],
-  });
-
-  const offers: OfferDTO[] = rows.map((o) => ({
-    id: o.id,
-    source: o.source,
-    title: o.title,
-    url: o.url,
-    description: o.description,
-    location: o.location,
-    category: o.category,
-    contractType: o.contractType,
-    deadline: o.deadline?.toISOString() ?? null,
-    publishedAt: o.publishedAt?.toISOString() ?? null,
-    status: o.status,
-    isActive: o.isActive,
-    firstSeenAt: o.firstSeenAt.toISOString(),
-  }));
-
-  const lastRun = await prisma.scrapeRun.findFirst({
-    where: { ok: true },
-    orderBy: { finishedAt: "desc" },
-    select: { finishedAt: true },
-  });
+  const [rows, total, lastRunAt] = await Promise.all([
+    prisma.jobOffer.findMany({
+      where: { isActive: true },
+      orderBy: [...OFFERS_ORDER],
+      take: SSR_COUNT,
+    }),
+    prisma.jobOffer.count(),
+    getLastRunAt(),
+  ]);
 
   return (
     <OffersApp
-      initialOffers={offers}
-      lastRunAt={lastRun?.finishedAt?.toISOString() ?? null}
+      initialOffers={rows.map(toDTO)}
+      totalCount={total}
+      lastRunAt={lastRunAt}
     />
   );
 }

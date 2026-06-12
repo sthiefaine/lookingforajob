@@ -4,7 +4,7 @@ import { educationGouvScraper } from "./educationGouv";
 import { heidelbergScraper } from "./heidelberg";
 import { montp3Scraper } from "./montp3";
 import type { Scraper } from "./types";
-import type { JobOffer, Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 
 export const scrapers: Scraper[] = [
   educationGouvScraper,
@@ -26,36 +26,69 @@ async function runOne(scraper: Scraper): Promise<ScrapeSummary> {
   });
   try {
     const offers = await scraper.scrape();
-    const newOffers: JobOffer[] = [];
     const now = new Date();
 
-    for (const o of offers) {
-      const existing = await prisma.jobOffer.findUnique({
-        where: {
-          source_externalId: { source: scraper.source, externalId: o.externalId },
-        },
-        select: { id: true },
-      });
-      const data = {
-        title: o.title,
-        url: o.url,
-        description: o.description,
-        location: o.location,
-        category: o.category,
-        contractType: o.contractType,
-        deadline: o.deadline,
-        publishedAt: o.publishedAt,
-        raw: (o.raw ?? undefined) as Prisma.InputJsonValue | undefined,
+    // Batched sync: a handful of queries per run instead of one per offer.
+    const existing = await prisma.jobOffer.findMany({
+      where: { source: scraper.source },
+      select: {
+        externalId: true,
+        title: true,
+        url: true,
+        deadline: true,
         isActive: true,
-        lastSeenAt: now,
-      };
-      if (existing) {
-        await prisma.jobOffer.update({ where: { id: existing.id }, data });
-      } else {
-        const created = await prisma.jobOffer.create({
-          data: { ...data, source: scraper.source, externalId: o.externalId },
+      },
+    });
+    const byExternalId = new Map(existing.map((e) => [e.externalId, e]));
+
+    const fresh = offers.filter((o) => !byExternalId.has(o.externalId));
+    if (fresh.length > 0) {
+      await prisma.jobOffer.createMany({
+        data: fresh.map((o) => ({
+          source: scraper.source,
+          externalId: o.externalId,
+          title: o.title,
+          url: o.url,
+          description: o.description,
+          location: o.location,
+          category: o.category,
+          contractType: o.contractType,
+          deadline: o.deadline,
+          publishedAt: o.publishedAt,
+          raw: (o.raw ?? undefined) as Prisma.InputJsonValue | undefined,
+          lastSeenAt: now,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    // Refresh lastSeenAt / reactivate everything still listed (one query).
+    const seenIds = offers.map((o) => o.externalId);
+    if (seenIds.length > 0) {
+      await prisma.jobOffer.updateMany({
+        where: { source: scraper.source, externalId: { in: seenIds } },
+        data: { lastSeenAt: now, isActive: true },
+      });
+    }
+
+    // Per-offer updates only when something meaningful actually changed.
+    for (const o of offers) {
+      const prev = byExternalId.get(o.externalId);
+      if (
+        prev &&
+        (prev.title !== o.title ||
+          prev.url !== o.url ||
+          (prev.deadline?.getTime() ?? null) !== (o.deadline?.getTime() ?? null))
+      ) {
+        await prisma.jobOffer.update({
+          where: {
+            source_externalId: {
+              source: scraper.source,
+              externalId: o.externalId,
+            },
+          },
+          data: { title: o.title, url: o.url, deadline: o.deadline },
         });
-        newOffers.push(created);
       }
     }
 
@@ -77,12 +110,18 @@ async function runOne(scraper: Scraper): Promise<ScrapeSummary> {
         finishedAt: new Date(),
         ok: true,
         found: offers.length,
-        added: newOffers.length,
+        added: fresh.length,
       },
     });
 
-    if (newOffers.length > 0) {
-      await notifyNewOffers(newOffers).catch((e) =>
+    if (fresh.length > 0) {
+      const created = await prisma.jobOffer.findMany({
+        where: {
+          source: scraper.source,
+          externalId: { in: fresh.map((o) => o.externalId) },
+        },
+      });
+      await notifyNewOffers(created).catch((e) =>
         console.error("[notify] failed:", e)
       );
     }
@@ -91,7 +130,7 @@ async function runOne(scraper: Scraper): Promise<ScrapeSummary> {
       source: scraper.source,
       ok: true,
       found: offers.length,
-      added: newOffers.length,
+      added: fresh.length,
     };
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

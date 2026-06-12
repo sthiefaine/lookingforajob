@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useMemo, useRef } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import { useStore } from "zustand";
 import type { OfferStatus, Source } from "@prisma/client";
 import {
@@ -48,25 +48,66 @@ function fmtDate(iso: string | null): string | null {
   });
 }
 
+const REFRESH_MS = 60_000;
+
 export function OffersApp({
   initialOffers,
+  totalCount,
   lastRunAt,
 }: {
   initialOffers: OfferDTO[];
+  totalCount: number;
   lastRunAt: string | null;
 }) {
   const storeRef = useRef<OffersStore | null>(null);
   if (!storeRef.current) {
-    storeRef.current = createOffersStore(initialOffers);
+    storeRef.current = createOffersStore(initialOffers, lastRunAt);
   }
+
+  // Fetch the full list right after first paint, then keep it fresh so new
+  // scrapes show up without a manual reload.
+  useEffect(() => {
+    const store = storeRef.current!;
+    let cancelled = false;
+
+    const refresh = async () => {
+      if (document.visibilityState === "hidden") return;
+      try {
+        const res = await fetch("/api/offers");
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          offers: OfferDTO[];
+          lastRunAt: string | null;
+        };
+        if (!cancelled) store.getState().replaceAll(data.offers, data.lastRunAt);
+      } catch {
+        // transient network error — next tick will retry
+      }
+    };
+
+    refresh();
+    const interval = setInterval(refresh, REFRESH_MS);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
   return (
     <StoreCtx.Provider value={storeRef.current}>
-      <OffersScreen lastRunAt={lastRunAt} />
+      <OffersScreen totalCount={totalCount} />
     </StoreCtx.Provider>
   );
 }
 
-function OffersScreen({ lastRunAt }: { lastRunAt: string | null }) {
+function OffersScreen({ totalCount }: { totalCount: number }) {
+  const lastRunAt = useOffers((s) => s.lastRunAt);
+  const fullyLoaded = useOffers((s) => s.fullyLoaded);
   const offers = useOffers((s) => s.offers);
   const search = useOffers((s) => s.search);
   const sources = useOffers((s) => s.sources);
@@ -107,6 +148,11 @@ function OffersScreen({ lastRunAt }: { lastRunAt: string | null }) {
           </div>
           <p className="mt-0.5 text-xs text-zinc-400">
             {visible.length} affichée{visible.length > 1 ? "s" : ""}
+            {!fullyLoaded && totalCount > offers.length && (
+              <span className="ml-2 text-zinc-500">
+                chargement de {totalCount} offres…
+              </span>
+            )}
             {newCount > 0 && (
               <span className="ml-2 rounded-full bg-emerald-500/15 px-2 py-0.5 text-emerald-300">
                 {newCount} nouvelle{newCount > 1 ? "s" : ""}
@@ -156,14 +202,14 @@ function OffersScreen({ lastRunAt }: { lastRunAt: string | null }) {
           </p>
         ) : (
           <ul className="flex flex-col gap-2.5">
-            {visible.slice(0, 300).map((o) => (
+            {visible.slice(0, 200).map((o) => (
               <OfferCard key={o.id} offer={o} />
             ))}
           </ul>
         )}
-        {visible.length > 300 && (
+        {visible.length > 200 && (
           <p className="py-4 text-center text-xs text-zinc-500">
-            {visible.length - 300} offres de plus — affine les filtres pour les voir.
+            {visible.length - 200} offres de plus — affine les filtres pour les voir.
           </p>
         )}
       </main>
