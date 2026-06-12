@@ -93,8 +93,8 @@ export function OffersApp({
     const store = storeRef.current!;
     let cancelled = false;
 
-    const refresh = async () => {
-      if (document.visibilityState === "hidden") return;
+    const refresh = async (force = false) => {
+      if (!force && document.visibilityState === "hidden") return;
       try {
         const res = await fetch("/api/offers");
         if (!res.ok) return;
@@ -108,8 +108,8 @@ export function OffersApp({
       }
     };
 
-    refresh();
-    const interval = setInterval(refresh, REFRESH_MS);
+    refresh(true);
+    const interval = setInterval(() => refresh(), REFRESH_MS);
     const onVisible = () => {
       if (document.visibilityState === "visible") refresh();
     };
