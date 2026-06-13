@@ -41,6 +41,7 @@ export interface OffersState {
   setSort: (s: SortKey) => void;
   setShowInactive: (v: boolean) => void;
   setStatus: (id: string, status: OfferStatus) => Promise<void>;
+  markAllSeen: () => Promise<void>;
 }
 
 export type OffersStore = ReturnType<typeof createOffersStore>;
@@ -96,6 +97,16 @@ export function createOffersStore(
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ status }),
           });
+          if (!res.ok) set({ offers: prev });
+        },
+        markAllSeen: async () => {
+          const prev = get().offers;
+          set({
+            offers: prev.map((o) =>
+              o.status === "NEW" ? { ...o, status: "SEEN" } : o
+            ),
+          });
+          const res = await fetch("/api/offers/seen-all", { method: "POST" });
           if (!res.ok) set({ offers: prev });
         },
       }),

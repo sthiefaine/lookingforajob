@@ -94,6 +94,17 @@ const IconChevronDown = ({ className }: { className?: string }) => (
   </SvgIcon>
 );
 
+const IconCalendarPlus = ({ className }: { className?: string }) => (
+  <SvgIcon className={className}>
+    <path d="M8 2v4" />
+    <path d="M16 2v4" />
+    <rect width="18" height="18" x="3" y="4" rx="2" />
+    <path d="M3 10h18" />
+    <path d="M12 14v4" />
+    <path d="M10 16h4" />
+  </SvgIcon>
+);
+
 /* ---------------------------- metadata tables ----------------------------- */
 
 const SOURCE_META: Record<Source, { label: string; dot: string; text: string }> =
@@ -169,6 +180,19 @@ function fmtDate(iso: string | null): string | null {
   if (!iso) return null;
   const d = new Date(iso);
   return `${d.getUTCDate()} ${MONTHS_FR[d.getUTCMonth()]}`;
+}
+
+/** Date + time in the visitor's local timezone. Renders only after mount so
+ *  SSR (UTC container) and client (local) markup can't disagree. */
+function LocalDateTime({ iso }: { iso: string }) {
+  const [text, setText] = useState<string | null>(null);
+  useEffect(() => {
+    const d = new Date(iso);
+    const date = `${d.getDate()} ${MONTHS_FR[d.getMonth()]}`;
+    const time = `${String(d.getHours()).padStart(2, "0")}h${String(d.getMinutes()).padStart(2, "0")}`;
+    setText(`${date} à ${time}`);
+  }, [iso]);
+  return <>{text ?? " "}</>;
 }
 
 /* --------------------------------- shell ---------------------------------- */
@@ -251,6 +275,7 @@ function OffersScreen({ totalCount }: { totalCount: number }) {
   const clearDepts = useOffers((s) => s.clearDepts);
   const setSort = useOffers((s) => s.setSort);
   const setShowInactive = useOffers((s) => s.setShowInactive);
+  const markAllSeen = useOffers((s) => s.markAllSeen);
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -300,18 +325,28 @@ function OffersScreen({ totalCount }: { totalCount: number }) {
             </span>
           </div>
 
-          <p className="mt-0.5 text-xs text-zinc-500">
-            <span className="font-medium text-zinc-300 tabular-nums">
-              {visible.length}
-            </span>{" "}
-            sur {totalCount}
-            {!fullyLoaded && totalCount > offers.length && " · chargement…"}
+          <div className="mt-0.5 flex items-center gap-2 text-xs text-zinc-500">
+            <span>
+              <span className="font-medium text-zinc-300 tabular-nums">
+                {visible.length}
+              </span>{" "}
+              sur {totalCount}
+              {!fullyLoaded && totalCount > offers.length && " · chargement…"}
+            </span>
             {newCount > 0 && (
-              <span className="ml-2 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-px text-[11px] font-medium text-emerald-300">
-                {newCount} non consultée{newCount > 1 ? "s" : ""}
-              </span>
+              <>
+                <span className="rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-px text-[11px] font-medium text-emerald-300">
+                  {newCount} non consultée{newCount > 1 ? "s" : ""}
+                </span>
+                <button
+                  onClick={() => markAllSeen()}
+                  className="ml-auto shrink-0 rounded-md border border-zinc-800 px-2 py-0.5 text-[11px] text-zinc-400 hover:border-zinc-600 hover:text-zinc-200 active:bg-zinc-800"
+                >
+                  Tout marquer comme vu
+                </button>
+              </>
             )}
-          </p>
+          </div>
 
           {/* search */}
           <div className="relative mt-3">
@@ -703,7 +738,6 @@ function OfferCard({
   const setStatus = useOffers((s) => s.setStatus);
   const meta = SOURCE_META[offer.source];
   const deadline = fmtDate(offer.deadline);
-  const added = fmtDate(offer.firstSeenAt);
   const published = fmtDate(offer.publishedAt);
 
   return (
@@ -756,19 +790,23 @@ function OfferCard({
             {offer.contractType}
           </span>
         )}
-        {deadline ? (
+        {published && (
+          <span className="inline-flex items-center gap-1 text-zinc-500">
+            <IconClock className="h-3.5 w-3.5" />
+            Publiée le {published}
+          </span>
+        )}
+        {deadline && (
           <span className="inline-flex items-center gap-1 font-medium text-orange-300/90">
             <IconClock className="h-3.5 w-3.5" />
             Jusqu&apos;au {deadline}
           </span>
-        ) : (
-          (published ?? added) && (
-            <span className="inline-flex items-center gap-1 text-zinc-500">
-              <IconClock className="h-3.5 w-3.5" />
-              {published ? `Publiée le ${published}` : `Ajoutée le ${added}`}
-            </span>
-          )
         )}
+        {/* moment d'apparition dans la liste / d'ajout en base */}
+        <span className="inline-flex items-center gap-1 text-zinc-500">
+          <IconCalendarPlus className="h-3.5 w-3.5 text-zinc-600" />
+          Ajoutée le <LocalDateTime iso={offer.firstSeenAt} />
+        </span>
       </div>
 
       {/* description */}
