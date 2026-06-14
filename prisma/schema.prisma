@@ -56,3 +56,17 @@ model ScrapeRun {
   added      Int       @default(0)
   error      String?
 }
+
+model TelegramSubscriber {
+  chatId    String   @id
+  firstName String?
+  username  String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+/** Generic key/value state (e.g. Telegram getUpdates offset). */
+model AppState {
+  key   String @id
+  value String
+}

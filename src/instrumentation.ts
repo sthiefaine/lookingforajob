@@ -4,7 +4,14 @@ export async function register() {
 
   const cron = (await import("node-cron")).default;
   const { scrapeAll } = await import("@/lib/scrapers");
+  const { syncTelegramSubscribers, setTelegramCommands } = await import(
+    "@/lib/telegram"
+  );
 
+  // Register the Telegram command menu once at boot.
+  setTelegramCommands().catch(() => {});
+
+  // Scrape every 2 minutes.
   cron.schedule("*/2 * * * *", async () => {
     try {
       const summaries = await scrapeAll();
@@ -24,5 +31,18 @@ export async function register() {
       console.error("[cron] scrape failed:", e);
     }
   });
-  console.log("[cron] scraping every 2 minutes");
+
+  // Pick up /start, /stop, /help every minute so new subscribers onboard fast.
+  cron.schedule("* * * * *", async () => {
+    try {
+      const { added, removed } = await syncTelegramSubscribers();
+      if (added || removed) {
+        console.log(`[telegram] +${added} subscriber(s), -${removed}`);
+      }
+    } catch (e) {
+      console.error("[telegram] sync failed:", e);
+    }
+  });
+
+  console.log("[cron] scraping every 2 min, Telegram sync every 1 min");
 }
